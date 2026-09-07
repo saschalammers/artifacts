@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Summarizer Architektur",
+  "schemaVersion": 1,
+  "description": "Architektur und Kontextfluss des GREYHOUND Project Summarizer: Ablaufdiagramm der sieben Agenten, Kontextmengen an jeder Übergabestelle, Skalierungsrechnung von 97 auf 500 Tickets, JQL-Signalabfragen nach dem empirischen Test.",
+  "mcpTools": [],
+  "mcpServerNames": []
+}
+</script>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Project Summarizer – Architektur und Kontextfluss</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5c6370; --line: #e3e6ea;
+    --accent: #2d5f8f; --warn: #8f5a2d; --good: #2d7a4f; --bad: #a33;
+    --panel: #f7f8fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.5rem 5rem;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg); background: var(--bg);
+  }
+  main { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 2.5rem; font-size: .95rem; }
+  h2 {
+    font-size: 1.15rem; margin: 3rem 0 1rem; padding-bottom: .45rem;
+    border-bottom: 1px solid var(--line);
+  }
+  h3 { font-size: .98rem; margin: 2rem 0 .6rem; color: var(--accent); }
+  p { margin: 0 0 1rem; }
+  .diagram {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 1.5rem 1rem; overflow-x: auto; margin: 1.5rem 0;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; font-size: .87rem; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code {
+    background: var(--panel); padding: .1em .35em; border-radius: 3px;
+    font: .85em ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .tag {
+    display: inline-block; font-size: .72rem; padding: .12em .5em; border-radius: 3px;
+    font-weight: 600; letter-spacing: .02em;
+  }
+  .t-good { background: #e6f4ec; color: var(--good); }
+  .t-warn { background: #fbf0e4; color: var(--warn); }
+  .t-bad  { background: #fbe9e9; color: var(--bad); }
+  .note {
+    border-left: 3px solid var(--accent); background: var(--panel);
+    padding: .9rem 1.1rem; margin: 1.3rem 0; font-size: .92rem;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  ul { margin: 0 0 1rem; padding-left: 1.3rem; }
+  li { margin-bottom: .4rem; }
+  .foot { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Project Summarizer – Architektur und Kontextfluss</h1>
+<p class="sub">Entwurf nach Lauf 11 · geprüft gegen Kontextsparsamkeit und Skalierbarkeit von 30 bis 500 Tickets</p>
+
+<h2>Das Grundprinzip des Umbaus</h2>
+
+<p>Heute fließen <strong>Notiz und Belegzitat jedes einzelnen Tickets durch den Orchestrator</strong> – auch die der ausgeschlossenen. Bei 97 Tickets sind das rund 39.000 Zeichen Filterrückgaben, von denen nur ein Bruchteil in den Bericht gelangt. Das ist der größte Kontextposten des ganzen Systems und der Grund, warum die Ausgabe abbricht.</p>
+
+<p>Der Entwurf dreht das um: Der Orchestrator sieht nur <strong>Feldwerte und fertigen Text</strong>, niemals Rohinhalte. Notizen und Belegzitate entstehen und sterben im Kontext eines Cluster-Agenten. Damit wächst der Orchestrator-Kontext nicht mit der Ticketzahl, sondern mit der Zahl der Berichtseinträge – und die ist durch Verdichtung gedeckelt.</p>
+
+<h2>Ablauf</h2>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    S1["<b>Orchestrator · Schritt 1</b><br/>Fenster berechnen<br/><i>kein Datenkontext</i>"]
+
+    S2["<b>Datenabruf</b><br/>6 JQL-Abfragen<br/>Signal = Abfrageherkunft"]
+    J1[("Jira")]
+
+    S3["<b>Signal-Scanner</b><br/>Batches à 20–30 Kandidaten<br/>nur Frage: Kommentar im Fenster?"]
+    J2[("Jira<br/>fields: comment")]
+
+    S4["<b>Detail-Beschaffer</b><br/>Changelog für Signal 2/5/6<br/>Zeitpunkt + Ausführender"]
+    J3[("Jira<br/>Changelog")]
+
+    S5["<b>Orchestrator · Schritt 2</b><br/>RECHNEN statt ableiten:<br/>Rubrik · Highlight · Abschnitt · Basisrolle<br/>dann Cluster bilden"]
+
+    S6["<b>Cluster-Autor</b> · je Cluster<br/>lädt Volldaten seines Clusters<br/>schreibt fertige Bullets"]
+    J4[("Jira<br/>Volldaten")]
+
+    S7["<b>Cluster-Prüfer</b> · je Cluster<br/>unabhängiger Zweitblick<br/>prüft Text gegen Feldwerte"]
+    J5[("Jira<br/>schmale Felder")]
+
+    S8["<b>Orchestrator · Schritt 3</b><br/>Korrekturrunde je Cluster<br/>Bericht zusammensetzen"]
+
+    S9["<b>Schluss-Prüfer</b><br/>Struktur · Dedup · Zahlen<br/>Feldwertprüfung aller Include-Keys"]
+    J6[("Jira<br/>schmale Felder")]
+
+    S10["<b>Ausgabe</b><br/>1. Bericht<br/>2. Debug-Kontrollliste"]
+
+    S1 --> S2
+    S2 <--> J1
+    S2 -->|"Treffer mit Feldern<br/>+ Kandidaten-Keys"| S3
+    S3 <--> J2
+    S3 -->|"nur Treffer"| S4
+    S4 <--> J3
+    S4 -->|"Datum + Person"| S5
+    S5 -->|"Key + Feldwerte<br/>je Cluster"| S6
+    S6 <--> J4
+    S6 -->|"Bullets + Nachweiszeilen<br/><b>keine Notizen, keine Zitate</b>"| S7
+    S7 <--> J5
+    S7 -->|"OK oder Mängel"| S8
+    S8 --> S9
+    S9 <--> J6
+    S9 -->|"BESTANDEN"| S10
+
+    classDef orch fill:#e8eff7,stroke:#2d5f8f,stroke-width:2px,color:#1a1a1a
+    classDef agent fill:#f7f8fa,stroke:#8a93a0,color:#1a1a1a
+    classDef jira fill:#fff,stroke:#c3c9d1,stroke-dasharray:3 3,color:#5c6370
+    classDef out fill:#e6f4ec,stroke:#2d7a4f,stroke-width:2px,color:#1a1a1a
+
+    class S1,S5,S8 orch
+    class S2,S3,S4,S6,S7,S9 agent
+    class J1,J2,J3,J4,J5,J6 jira
+    class S10 out
+</pre>
+</div>
+
+<h2>Kontextmengen an den Übergabestellen</h2>
+
+<p>Angaben in Zeichen. Der Orchestrator-Prompt selbst liegt bei rund 20.000 und ist in allen Szenarien fix.</p>
+
+<table>
+<thead>
+<tr><th>Übergabe</th><th>Inhalt je Ticket</th><th class="num">Zeichen/Ticket</th><th class="num">bei 97</th><th class="num">bei 500</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td>Datenabruf → Orchestrator<br/><span class="tag t-good">Signaltreffer</span></td>
+  <td>Key, Projekt, Komponente, <code>created</code>, <code>resolutiondate</code>, <code>priority</code>, <code>labels</code>, <code>status</code>, <code>assignee</code>, <code>reporter</code>, Signalherkunft</td>
+  <td class="num">~120</td><td class="num">~2.400</td><td class="num">~14.400</td>
+</tr>
+<tr>
+  <td>Datenabruf → Orchestrator<br/><span class="tag t-good">Kandidaten</span></td>
+  <td>nur der Key</td>
+  <td class="num">~10</td><td class="num">~800</td><td class="num">~3.800</td>
+</tr>
+<tr>
+  <td>Signal-Scanner → Orchestrator</td>
+  <td>nur Treffer: Key, Kommentardatum, Autor, Felder</td>
+  <td class="num">~120</td><td class="num">~250</td><td class="num">~4.800</td>
+</tr>
+<tr>
+  <td>Detail-Beschaffer → Orchestrator</td>
+  <td>Key, Ereignisdatum, Person</td>
+  <td class="num">~60</td><td class="num">~700</td><td class="num">~3.600</td>
+</tr>
+<tr>
+  <td>Cluster-Autor → Orchestrator</td>
+  <td>fertiger Bullet-Text (verdichtet) + Nachweiszeile je Key</td>
+  <td class="num">~280</td><td class="num">~7.800</td><td class="num">~29.000</td>
+</tr>
+<tr>
+  <td>Cluster-Prüfer → Orchestrator</td>
+  <td>OK oder Mängel mit Key</td>
+  <td class="num">&lt;20</td><td class="num">~400</td><td class="num">~1.500</td>
+</tr>
+<tr>
+  <td><strong>Orchestrator gesamt</strong> (ohne Prompt)</td><td></td>
+  <td class="num"></td><td class="num"><strong>~12.400</strong></td><td class="num"><strong>~57.000</strong></td>
+</tr>
+<tr>
+  <td>heute, zum Vergleich</td>
+  <td>Filterrückgaben aller Tickets inkl. Notiz, Beleg, Quelle, Nachweis, Metadaten</td>
+  <td class="num">~400</td><td class="num"><strong>~48.000</strong></td><td class="num"><strong>~215.000</strong></td>
+</tr>
+</tbody>
+</table>
+
+<div class="note">
+<strong>Der entscheidende Unterschied</strong> steckt in der letzten Zeile. Heute wachsen die Rohinhalte mit der <em>Gesamtzahl</em> der Tickets, weil der Filter für jedes Ticket eine vollständige Zeile liefert – auch für die 69 ausgeschlossenen. Im Entwurf wachsen sie mit der Zahl der <em>Berichtseinträge</em>, und die ist durch Verdichtung gedeckelt. Bei 500 Tickets bleibt der Orchestrator unter dem Wert, den er heute bei 130 erreicht.
+</div>
+
+<h2>Was pro Agent aus- und eingeht</h2>
+
+<table>
+<thead>
+<tr><th>Agent</th><th>Jira-Werkzeug</th><th>Aufgabe – genau eine</th><th>skaliert über</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Datenabruf</strong></td><td>Search with JQL</td><td>Sechs Abfragen absetzen, Treffer je Signal zurückgeben</td><td>1 Aufruf, konstant</td></tr>
+<tr><td><strong>Signal-Scanner</strong></td><td>Search with JQL, <code>fields: ["comment"]</code></td><td>Eine Frage je Ticket: Kommentar im Fenster, von wem, wann</td><td>Batches, wächst linear</td></tr>
+<tr><td><strong>Detail-Beschaffer</strong></td><td>Get changelog</td><td>Zeitpunkt und Ausführenden für Signal 2, 5, 6 nachliefern</td><td>Batches, nur Include</td></tr>
+<tr><td><strong>Cluster-Autor</strong></td><td>Search with JQL, Volldaten</td><td>Notiz, Beleg und fertige Bullets für einen Cluster</td><td>max. 7 Aufrufe</td></tr>
+<tr><td><strong>Cluster-Prüfer</strong></td><td>Search with JQL, schmale Felder</td><td>Text des Clusters gegen Feldwerte prüfen</td><td>max. 7 Aufrufe</td></tr>
+<tr><td><strong>Schluss-Prüfer</strong></td><td>Search with JQL, schmale Felder</td><td>Struktur, Dedup, Zahlen, Feldwerte aller Include-Keys</td><td>1 Aufruf, konstant</td></tr>
+<tr><td><strong>Orchestrator</strong></td><td>keines</td><td>Rechnen, clustern, zusammensetzen, ausgeben</td><td>–</td></tr>
+</tbody>
+</table>
+
+<h3>Warum Cluster nach Produktabschnitt</h3>
+<p>Die Zahl der Produktabschnitte ist auf sechs festgelegt, plus Highlights. Damit hat die Zahl der Autoren- und Prüferaufrufe eine <strong>feste Obergrenze von sieben</strong>, unabhängig davon, ob 30 oder 500 Tickets vorliegen. Erst wenn ein einzelner Abschnitt eine Schwelle überschreitet, wird er zusätzlich nach Berichtsrubrik geteilt.</p>
+
+<p>Voraussetzung dafür: Der Produktabschnitt muss vor dem Clustern bekannt sein. Er ist es – aus Projekt und Komponente, beides liefert der Datenabruf. Nur <code>GREY</code> und <code>GBA</code> brauchen eine inhaltliche Entscheidung; für diese beiden Projekte bleibt eine Restmenge, die der Orchestrator anhand des Titels zuordnen muss.</p>
+
+<h2>Der harte Punkt: Zahl der Subagenten-Aufrufe</h2>
+
+<table>
+<thead>
+<tr><th>Stufe</th><th class="num">bei 97 Tickets</th><th class="num">bei 500 Tickets</th></tr>
+</thead>
+<tbody>
+<tr><td>Datenabruf</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td>Signal-Scanner (Batch 25)</td><td class="num">3</td><td class="num">16</td></tr>
+<tr><td>Detail-Beschaffer (Batch 10)</td><td class="num">2</td><td class="num">7</td></tr>
+<tr><td>Cluster-Autor</td><td class="num">6</td><td class="num">7</td></tr>
+<tr><td>Cluster-Prüfer</td><td class="num">6</td><td class="num">7</td></tr>
+<tr><td>Schluss-Prüfer</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td><strong>Summe</strong></td><td class="num"><strong>19</strong></td><td class="num"><strong>39</strong></td></tr>
+<tr><td>heute bei 97</td><td class="num"><strong>~34</strong></td><td class="num">–</td></tr>
+</tbody>
+</table>
+
+<div class="note warn">
+<strong>Offene Frage, die keine Architektur löst.</strong> Wir haben Evidenz, dass ein Lauf mit zwölf Filterbatches nach dem ersten in eine Rückfrage ausgebrochen ist. Ob Rovo 39 Subagenten-Aufrufe in einem Lauf durchhält, ist unbekannt. Der Entwurf senkt die Zahl bei 97 Tickets von 34 auf 19 – aber 500 Tickets bleiben ein Plattformtest, kein Architekturproblem. Falls ein Limit existiert, ist der einzige Ausweg, den Signal-Scanner mit größeren Batches zu fahren und die Kommentarprüfung gröber zu machen.
+</div>
+
+<h2>Was der Kommentar-Scanner ändert</h2>
+
+<p>Die Kandidatenmenge für Signal 3 ist der einzige Posten, der mit der Gesamtzahl wächst – rund 380 Tickets bei 500 gesamt. Dass ein eigener Agent sie prüft, ist deshalb nicht nur eine Aufräumidee, sondern der Kern der Skalierbarkeit: <strong>Diese Menge darf den Orchestrator nie erreichen.</strong></p>
+
+<p>Der Scanner lädt <code>fields: ["comment"]</code>, beantwortet eine einzige Frage und gibt nur Treffer zurück. Sein Kontext füllt sich mit dreizehn langen Kommentaren pro Ticket und wird nach jedem Batch verworfen. Genau dafür sind Subagenten da. Ein Ticket, an dem im Zeitraum nur diskutiert wurde, bleibt damit vollständig erfasst – ohne dass die Diskussion den Hauptkontext belastet.</p>
+
+<h2>Signalabfragen nach dem empirischen Test</h2>
+
+<table>
+<thead>
+<tr><th>Signal</th><th>JQL</th><th>Auflösung</th><th>Grenzen</th></tr>
+</thead>
+<tbody>
+<tr><td>1 erledigt</td><td><code>resolutiondate &gt;= A AND resolutiondate &lt;= E</code></td><td>Minute</td><td>beidseitig</td></tr>
+<tr><td>2 Statuswechsel</td><td><code>status CHANGED DURING (A, E)</code></td><td>Minute</td><td>beidseitig</td></tr>
+<tr><td>4 angelegt</td><td><code>created &gt;= A AND created &lt;= E</code></td><td>Minute</td><td>beidseitig</td></tr>
+<tr><td>5 Zeitbuchung</td><td><code>worklogDate &gt;= A_tag AND worklogDate &lt;= E_tag</code></td><td><span class="tag t-warn">nur Tag</span></td><td>beidseitig</td></tr>
+<tr><td>6 zugewiesen</td><td><code>assignee CHANGED DURING (A, E)</code></td><td>Minute</td><td>beidseitig</td></tr>
+<tr><td>3 kommentiert</td><td><code>updated &gt;= A AND created &lt;= E</code></td><td><span class="tag t-bad">kein Prädikat</span></td><td>oben offen</td></tr>
+</tbody>
+</table>
+
+<p><code>worklogDate</code> akzeptiert keine Uhrzeit. Für einen Ein-Tages-Bericht liefert die Tagesauflösung mit Puffer die Nachbartage mit – der Scanner muss den Zeitstempel danach gegen das Fenster prüfen. Praktisch heißt das: Ein Ticket kann über Signal 5 in die Kandidatenmenge geraten und dort wieder ausscheiden. Das ist der einzige Fall, in dem eine Signalabfrage nicht exakt ist.</p>
+
+<div class="foot">
+Entwurf, nicht umgesetzt. Die Prompt-Dateien entsprechen weiterhin dem Stand von Lauf 11.
+</div>
+
+</main>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '13px',
+      primaryColor: '#f7f8fa',
+      primaryTextColor: '#1a1a1a',
+      primaryBorderColor: '#8a93a0',
+      lineColor: '#8a93a0',
+      tertiaryColor: '#fff'
+    },
+    flowchart: { curve: 'basis', nodeSpacing: 40, rankSpacing: 55, useMaxWidth: true }
+  });
+</script>
+</body>
+</html>
